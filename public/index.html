@@ -10,7 +10,9 @@
 <body>
   <header>
     <h2>⚡ OpenSimu Web</h2>
-    <div>
+    <div style="display: flex; gap: 10px; align-items: center;">
+      <button class="symbol-btn" style="padding: 5px 12px; background: #2e7d32;" id="btn-play">▶ Simular</button>
+      <button class="symbol-btn" style="padding: 5px 12px; background: #c62828; display: none;" id="btn-stop">⏹ Detener</button>
       <button class="symbol-btn" style="padding: 5px 10px;" id="btn-clear">Limpiar Lienzo</button>
     </div>
   </header>
@@ -18,9 +20,12 @@
   <div class="main-container">
     <aside id="sidebar">
       <h3>Eléctrica (IEC)</h3>
-      <button class="symbol-btn" id="add-power">⚡ Alimentación (24V / 0V)</button>
-      <button class="symbol-btn" id="add-pushbutton">🔘 Pulsador NA</button>
-      <button class="symbol-btn" id="add-relay">󰝤 Relé / Bobina</button>
+      <button id="add-power" class="btn-component">⚡ Alimentación 24V/0V</button>
+      <button id="add-pushbutton-nc" class="btn-component">🔴 Pulsador NC (S0)</button>
+      <button id="add-pushbutton" class="btn-component">🟢 Pulsador NA (S1)</button>
+      <button id="add-relay" class="btn-component">🔲 Bobina Relé (K1)</button>
+      <button id="add-contact-no" class="btn-component">🪜 Contacto Relé NA</button>
+      <button id="add-contact-nc" class="btn-component">🪜 Contacto Relé NC</button>
 
       <h3 style="margin-top: 15px;">Neumática (ISO)</h3>
       <button class="symbol-btn" id="add-valve32">🔀 Válvula 3/2 NC</button>
