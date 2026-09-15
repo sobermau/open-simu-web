@@ -15,6 +15,7 @@ stage.add(layer);
 
 // Estados globales
 let isSimulating = false;
+let simulationInterval = null;
 let selectedPin = null;
 let tempLine = null;
 let selectedElement = null;
@@ -67,7 +68,7 @@ function addHitArea(group, width, height) {
         y: -10,
         width: width + 20,
         height: height + 20,
-        fill: 'rgba(0,0,0,0.001)', // Relleno casi transparente para capturar clics en todo el recuadro
+        fill: 'rgba(0,0,0,0.001)',
                                    listening: true
     });
     group.add(hitArea);
@@ -243,6 +244,8 @@ function getDefaultName(type) {
         case 'RELAY': return `K${count}`;
         case 'RELAY_CONTACT_NO': return `K1`;
         case 'RELAY_CONTACT_NC': return `K1`;
+        case 'TIMER_TON': return `KT${count}`;
+        case 'TIMER_CONTACT_NO': return `KT1`;
         case 'VALVE32': return `Y${count}`;
         case 'CYLINDER': return `A${count}`;
         default: return `COMP${count}`;
@@ -308,7 +311,7 @@ function createPushButtonNO(x, y) {
     group.on('mousedown', (e) => {
         if (!isSimulating || e.evt.button !== 0) return;
         group.isClosed = true;
-        group.bridge.points([20, 12, 20, 38]); // Mueve la barra de contacto directamente a las terminales
+        group.bridge.points([20, 12, 20, 38]);
         solveCircuit();
         layer.batchDraw();
     });
@@ -316,7 +319,7 @@ function createPushButtonNO(x, y) {
     stage.on('mouseup', (e) => {
         if (!isSimulating || !group.isClosed || e.evt.button !== 0) return;
         group.isClosed = false;
-        group.bridge.points([28, 12, 28, 38]); // Regresa a la posición abierta
+        group.bridge.points([28, 12, 28, 38]);
         solveCircuit();
         layer.batchDraw();
     });
@@ -358,7 +361,7 @@ function createPushButtonNC(x, y) {
     group.on('mousedown', (e) => {
         if (!isSimulating || e.evt.button !== 0) return;
         group.isClosed = false;
-        group.bridge.points([28, 15, 28, 35]); // Abre el contacto desplazándolo a la derecha
+        group.bridge.points([28, 15, 28, 35]);
         solveCircuit();
         layer.batchDraw();
     });
@@ -366,7 +369,7 @@ function createPushButtonNC(x, y) {
     stage.on('mouseup', (e) => {
         if (!isSimulating || group.isClosed || e.evt.button !== 0) return;
         group.isClosed = true;
-        group.bridge.points([20, 15, 20, 35]); // Cierra el contacto volviendo a la izquierda
+        group.bridge.points([20, 15, 20, 35]);
         solveCircuit();
         layer.batchDraw();
     });
@@ -474,6 +477,83 @@ function createRelayContactNC(x, y) {
     layer.batchDraw();
 }
 
+function createTimerTON(x, y) {
+    const tag = prompt("Nombre del Temporizador:", getDefaultName('TIMER_TON')) || 'KT1';
+    if (!tag) return;
+
+    const inputTime = prompt("Tiempo de retardo (segundos):", "3");
+    const seconds = parseFloat(inputTime) || 3;
+
+    const group = new Konva.Group({ x, y, draggable: !isSimulating });
+    group.type = 'TIMER_TON';
+    group.tag = tag;
+    group.presetTime = seconds;
+    group.startTime = null;
+    group.isEnergized = false;
+    group.isDone = false;
+
+    addHitArea(group, 60, 70);
+
+    const box = new Konva.Rect({
+        x: 0, y: 10, width: 45, height: 50, stroke: '#ff9800', strokeWidth: 2, fill: '#1e1e1e', cornerRadius: 2,
+    });
+
+    const crossLine = new Konva.Line({ points: [0, 20, 45, 20], stroke: '#ff9800', strokeWidth: 1.5 });
+    const lineA1 = new Konva.Line({ points: [22.5, 0, 22.5, 10], stroke: '#ffffff', strokeWidth: 2 });
+    const lineA2 = new Konva.Line({ points: [22.5, 60, 22.5, 70], stroke: '#ffffff', strokeWidth: 2 });
+
+    const labelA1 = new Konva.Text({ x: 5, y: 0, text: 'A1', fontSize: 9, fill: '#aaaaaa' });
+    const labelA2 = new Konva.Text({ x: 5, y: 60, text: 'A2', fontSize: 9, fill: '#aaaaaa' });
+
+    const label = new Konva.Text({ x: 8, y: 23, text: tag, fontSize: 13, fill: '#ffffff', fontStyle: 'bold' });
+    const timerText = new Konva.Text({ x: 8, y: 42, text: `${seconds}s`, fontSize: 11, fill: '#ff9800' });
+
+    group.add(box, crossLine, lineA1, lineA2, labelA1, labelA2, label, timerText);
+    group.box = box;
+    group.timerText = timerText;
+
+    group.pinA1 = createPin(group, 22.5, 0, 'electrical', 'in');
+    group.pinA2 = createPin(group, 22.5, 70, 'electrical', 'out');
+
+    setupGroupDrag(group);
+    layer.add(group);
+    window.components.push(group);
+    layer.batchDraw();
+}
+
+function createTimerContactNO(x, y) {
+    const tag = prompt("Nombre del Temporizador asociado:", getDefaultName('TIMER_CONTACT_NO')) || 'KT1';
+
+    const group = new Konva.Group({ x, y, draggable: !isSimulating });
+    group.type = 'TIMER_CONTACT_NO';
+    group.tag = tag;
+    group.isClosed = false;
+
+    addHitArea(group, 50, 50);
+
+    const topTerm = new Konva.Line({ points: [15, 0, 15, 15], stroke: '#ff9800', strokeWidth: 2 });
+    const botTerm = new Konva.Line({ points: [15, 35, 15, 50], stroke: '#ff9800', strokeWidth: 2 });
+    const dot1 = new Konva.Circle({ x: 15, y: 15, radius: 2.5, fill: '#ff9800' });
+    const dot2 = new Konva.Circle({ x: 15, y: 35, radius: 2.5, fill: '#ff9800' });
+
+    const bridge = new Konva.Line({ points: [15, 35, 25, 15], stroke: '#ff9800', strokeWidth: 2.5 });
+    // Símbolo paraguas / retardo TON
+    const arc = new Konva.Line({ points: [25, 15, 28, 20, 22, 20, 25, 15], stroke: '#ff9800', strokeWidth: 1.5 });
+
+    const label = new Konva.Text({ x: 30, y: 18, text: tag, fontSize: 13, fill: '#ff9800', fontStyle: 'bold' });
+
+    group.add(topTerm, botTerm, dot1, dot2, bridge, arc, label);
+    group.bridge = bridge;
+
+    group.pinIn = createPin(group, 15, 0, 'electrical', 'in');
+    group.pinOut = createPin(group, 15, 50, 'electrical', 'out');
+
+    setupGroupDrag(group);
+    layer.add(group);
+    window.components.push(group);
+    layer.batchDraw();
+}
+
 function createValve32(x, y) {
     const tag = prompt("Nombre del Solenoide/Válvula:", getDefaultName('VALVE32')) || 'Y1';
 
@@ -531,6 +611,45 @@ function createCylinder(x, y) {
 // ==========================================
 // SIMULACIÓN
 // ==========================================
+function updateTimers() {
+    if (!isSimulating) return;
+
+    let stateChanged = false;
+    const now = Date.now();
+
+    window.components.forEach(c => {
+        if (c.type === 'TIMER_TON') {
+            if (c.isEnergized) {
+                if (!c.startTime) c.startTime = now;
+                const elapsed = (now - c.startTime) / 1000;
+
+                if (c.timerText) {
+                    const remaining = Math.max(0, c.presetTime - elapsed).toFixed(1);
+                    c.timerText.text(`${remaining}s`);
+                }
+
+                if (elapsed >= c.presetTime && !c.isDone) {
+                    c.isDone = true;
+                    stateChanged = true;
+                }
+            } else {
+                if (c.startTime !== null || c.isDone) {
+                    c.startTime = null;
+                    c.isDone = false;
+                    if (c.timerText) c.timerText.text(`${c.presetTime}s`);
+                    stateChanged = true;
+                }
+            }
+        }
+    });
+
+    if (stateChanged) {
+        solveCircuit();
+    } else {
+        layer.batchDraw();
+    }
+}
+
 function solveCircuit() {
     if (!isSimulating) return;
 
@@ -541,6 +660,10 @@ function solveCircuit() {
 
     window.components.forEach(c => {
         if (c.type === 'RELAY') {
+            c.isEnergized = false;
+            if (c.box) c.box.fill('#1e1e1e');
+        }
+        if (c.type === 'TIMER_TON') {
             c.isEnergized = false;
             if (c.box) c.box.fill('#1e1e1e');
         }
@@ -560,16 +683,16 @@ function solveCircuit() {
             });
         });
 
-        let relayStateChanged = false;
+        let stateChanged = false;
 
         window.components.forEach(c => {
             if (c.type === 'RELAY_CONTACT_NO') {
                 const parentRelay = window.components.find(r => r.type === 'RELAY' && r.tag === c.tag);
-                const shouldClose = parentRelay && parentRelay.isEnergized;
+                const shouldClose = !!(parentRelay && parentRelay.isEnergized);
                 if (c.isClosed !== shouldClose) {
                     c.isClosed = shouldClose;
                     c.bridge.points(shouldClose ? [15, 35, 15, 15] : [15, 35, 25, 15]);
-                    relayStateChanged = true;
+                    stateChanged = true;
                 }
             }
             if (c.type === 'RELAY_CONTACT_NC') {
@@ -578,12 +701,21 @@ function solveCircuit() {
                 if (c.isClosed !== shouldClose) {
                     c.isClosed = shouldClose;
                     c.bridge.points(shouldClose ? [15, 15, 15, 35] : [15, 35, 25, 15]);
-                    relayStateChanged = true;
+                    stateChanged = true;
+                }
+            }
+            if (c.type === 'TIMER_CONTACT_NO') {
+                const parentTimer = window.components.find(r => r.type === 'TIMER_TON' && r.tag === c.tag);
+                const shouldClose = !!(parentTimer && parentTimer.isDone);
+                if (c.isClosed !== shouldClose) {
+                    c.isClosed = shouldClose;
+                    c.bridge.points(shouldClose ? [15, 35, 15, 15] : [15, 35, 25, 15]);
+                    stateChanged = true;
                 }
             }
         });
 
-        if (relayStateChanged) {
+        if (stateChanged) {
             solveCircuit();
         } else {
             layer.batchDraw();
@@ -597,7 +729,8 @@ function propagateElectrical(currentPin, activeWire) {
     const parent = currentPin.parentComponent;
 
     if ((parent.type === 'PUSHBUTTON_NO' || parent.type === 'PUSHBUTTON_NC' ||
-        parent.type === 'RELAY_CONTACT_NO' || parent.type === 'RELAY_CONTACT_NC') && parent.isClosed) {
+        parent.type === 'RELAY_CONTACT_NO' || parent.type === 'RELAY_CONTACT_NC' ||
+        parent.type === 'TIMER_CONTACT_NO') && parent.isClosed) {
         const otherPin = currentPin === parent.pinIn ? parent.pinOut : parent.pinIn;
     findAndPropagate(otherPin);
         }
@@ -605,6 +738,11 @@ function propagateElectrical(currentPin, activeWire) {
         if (parent.type === 'RELAY') {
             parent.isEnergized = true;
             if (parent.box) parent.box.fill('#ffcc00');
+        }
+
+        if (parent.type === 'TIMER_TON') {
+            parent.isEnergized = true;
+            if (parent.box) parent.box.fill('#ff9800');
         }
 
         if (parent.type === 'VALVE32' && currentPin === parent.pinSol) {
@@ -649,20 +787,27 @@ function setSimulationMode(active) {
     if (btnPlay) btnPlay.style.display = active ? 'none' : 'inline-block';
     if (btnStop) btnStop.style.display = active ? 'inline-block' : 'none';
 
-    if (!active) {
+    if (active) {
+        simulationInterval = setInterval(updateTimers, 100);
+    } else {
+        if (simulationInterval) {
+            clearInterval(simulationInterval);
+            simulationInterval = null;
+        }
+
         window.components.forEach(c => {
             if (c.type === 'PUSHBUTTON_NO') {
                 c.isClosed = false;
                 if (c.bridge) {
-                    c.bridge.x(0); // Restablecer cualquier desplazamiento x acumulado
-                    c.bridge.points([28, 12, 28, 38]); // Restablecer los puntos del estado reposo (abierto)
+                    c.bridge.x(0);
+                    c.bridge.points([28, 12, 28, 38]);
                 }
             }
             if (c.type === 'PUSHBUTTON_NC') {
                 c.isClosed = true;
                 if (c.bridge) {
-                    c.bridge.x(0); // Restablecer cualquier desplazamiento x acumulado
-                    c.bridge.points([20, 15, 20, 35]); // Restablecer los puntos del estado reposo (cerrado)
+                    c.bridge.x(0);
+                    c.bridge.points([20, 15, 20, 35]);
                 }
             }
             if (c.type === 'RELAY_CONTACT_NO') {
@@ -672,6 +817,16 @@ function setSimulationMode(active) {
             if (c.type === 'RELAY_CONTACT_NC') {
                 c.isClosed = true;
                 if (c.bridge) c.bridge.points([15, 15, 15, 35]);
+            }
+            if (c.type === 'TIMER_TON') {
+                c.startTime = null;
+                c.isDone = false;
+                c.isEnergized = false;
+                if (c.timerText) c.timerText.text(`${c.presetTime}s`);
+            }
+            if (c.type === 'TIMER_CONTACT_NO') {
+                c.isClosed = false;
+                if (c.bridge) c.bridge.points([15, 35, 25, 15]);
             }
         });
     }
@@ -688,6 +843,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnRelay = document.getElementById('add-relay');
     const btnContactNO = document.getElementById('add-contact-no');
     const btnContactNC = document.getElementById('add-contact-nc');
+    const btnTimerTON = document.getElementById('add-timer-ton');
+    const btnTimerContactNO = document.getElementById('add-timer-contact-no');
     const btnValve = document.getElementById('add-valve32');
     const btnCyl = document.getElementById('add-cylinder');
 
@@ -697,8 +854,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (btnRelay) btnRelay.addEventListener('click', () => { if (!isSimulating) createRelay(300, 60); });
     if (btnContactNO) btnContactNO.addEventListener('click', () => { if (!isSimulating) createRelayContactNO(300, 160); });
     if (btnContactNC) btnContactNC.addEventListener('click', () => { if (!isSimulating) createRelayContactNC(300, 240); });
-    if (btnValve) btnValve.addEventListener('click', () => { if (!isSimulating) createValve32(450, 160); });
-    if (btnCyl) btnCyl.addEventListener('click', () => { if (!isSimulating) createCylinder(550, 160); });
+    if (btnTimerTON) btnTimerTON.addEventListener('click', () => { if (!isSimulating) createTimerTON(420, 60); });
+    if (btnTimerContactNO) btnTimerContactNO.addEventListener('click', () => { if (!isSimulating) createTimerContactNO(420, 160); });
+    if (btnValve) btnValve.addEventListener('click', () => { if (!isSimulating) createValve32(540, 160); });
+    if (btnCyl) btnCyl.addEventListener('click', () => { if (!isSimulating) createCylinder(650, 160); });
 
     const btnPlay = document.getElementById('btn-play');
     const btnStop = document.getElementById('btn-stop');
