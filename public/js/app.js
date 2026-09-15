@@ -6,6 +6,10 @@ const stage = new Konva.Stage({
     height: container ? container.clientHeight : 600,
 });
 
+// Hacer que el lienzo sea enfocable para capturar eventos de teclado siempre
+stage.container().tabIndex = 1;
+stage.container().focus();
+
 const layer = new Konva.Layer();
 stage.add(layer);
 
@@ -13,11 +17,15 @@ stage.add(layer);
 let isSimulating = false;
 let selectedPin = null;
 let tempLine = null;
+let selectedElement = null;
+let selectionBox = null;
 
-const wires = [];
-const components = [];
+window.wires = [];
+window.components = [];
 
-// Dibujar Rejilla CAD
+// ==========================================
+// REJILLA
+// ==========================================
 function drawGrid() {
     const gridSize = 20;
     const width = stage.width();
@@ -52,20 +60,109 @@ function getOrthogonalPoints(p1, p2) {
     return [p1.x, p1.y, midX, p1.y, midX, p2.y, p2.x, p2.y];
 }
 
-// Creación de Terminales Interactivos
+// Crea una zona invisible que responde al clic en todo el área del grupo
+function addHitArea(group, width, height) {
+    const hitArea = new Konva.Rect({
+        x: -10,
+        y: -10,
+        width: width + 20,
+        height: height + 20,
+        fill: 'rgba(0,0,0,0.001)', // Relleno casi transparente para capturar clics en todo el recuadro
+                                   listening: true
+    });
+    group.add(hitArea);
+    hitArea.moveToBottom();
+    return hitArea;
+}
+
+// ==========================================
+// SELECCIÓN Y ELIMINACIÓN DE ELEMENTOS
+// ==========================================
+function clearSelection() {
+    if (selectionBox) {
+        selectionBox.destroy();
+        selectionBox = null;
+    }
+    if (selectedElement && selectedElement.className === 'Line') {
+        const wireObj = window.wires.find(w => w.wire === selectedElement);
+        if (wireObj) {
+            selectedElement.stroke(wireObj.startPin.pinType === 'electrical' ? '#888888' : '#0288d1');
+        }
+    }
+    selectedElement = null;
+    layer.batchDraw();
+}
+
+function updateSelectionBox() {
+    if (selectionBox) {
+        selectionBox.destroy();
+        selectionBox = null;
+    }
+
+    if (selectedElement && window.components.includes(selectedElement)) {
+        const box = selectedElement.getClientRect({ relativeTo: layer });
+        selectionBox = new Konva.Rect({
+            x: box.x - 4,
+            y: box.y - 4,
+            width: box.width + 8,
+            height: box.height + 8,
+            stroke: '#ff0055',
+            strokeWidth: 2,
+            dash: [6, 4],
+            listening: false
+        });
+        layer.add(selectionBox);
+    }
+}
+
+window.deleteElement = function(element) {
+    if (isSimulating || !element) return;
+
+    if (window.components.includes(element)) {
+        const pins = element.find('Circle');
+        pins.forEach(pin => {
+            for (let i = window.wires.length - 1; i >= 0; i--) {
+                if (window.wires[i].startPin === pin || window.wires[i].endPin === pin) {
+                    window.wires[i].wire.destroy();
+                    window.wires.splice(i, 1);
+                }
+            }
+        });
+
+        const index = window.components.indexOf(element);
+        if (index > -1) window.components.splice(index, 1);
+        element.destroy();
+    } else if (element.className === 'Line') {
+        const wireIndex = window.wires.findIndex(w => w.wire === element);
+        if (wireIndex > -1) {
+            window.wires[wireIndex].wire.destroy();
+            window.wires.splice(wireIndex, 1);
+        }
+    }
+
+    clearSelection();
+    layer.batchDraw();
+};
+
+// ==========================================
+// TERMINALES Y CABLES
+// ==========================================
 function createPin(group, relativeX, relativeY, pinType = 'electrical', role = 'generic') {
     const color = pinType === 'electrical' ? '#ff5555' : '#00bcd4';
 
     const pin = new Konva.Circle({
-        x: relativeX, y: relativeY, radius: 5, fill: color, stroke: '#ffffff', strokeWidth: 1,
+        x: relativeX, y: relativeY, radius: 6, fill: color, stroke: '#ffffff', strokeWidth: 1.5,
     });
 
     pin.pinType = pinType;
     pin.role = role;
     pin.parentComponent = group;
+    pin.isPin = true;
 
-    pin.on('mousedown', (e) => {
+    pin.on('mousedown tap', (e) => {
         if (isSimulating) return;
+        if (e.evt && e.evt.button !== 0 && e.evt.button !== undefined) return;
+
         e.cancelBubble = true;
         const absolutePos = pin.getAbsolutePosition();
 
@@ -85,10 +182,11 @@ function createPin(group, relativeX, relativeY, pinType = 'electrical', role = '
                 points: getOrthogonalPoints(startPos, endPos),
                                         stroke: pinType === 'electrical' ? '#888888' : '#0288d1',
                                         strokeWidth: 2.5,
+                                        hitStrokeWidth: 12
             });
 
             layer.add(wire);
-            wires.push({ wire, startPin: selectedPin, endPin: pin, powered: false });
+            window.wires.push({ wire, startPin: selectedPin, endPin: pin, powered: false });
 
             if (tempLine) tempLine.destroy();
             tempLine = null;
@@ -100,14 +198,14 @@ function createPin(group, relativeX, relativeY, pinType = 'electrical', role = '
     pin.on('mouseenter', () => {
         if (!isSimulating) {
             document.body.style.cursor = 'crosshair';
-            pin.radius(7);
+            pin.radius(8);
             layer.batchDraw();
         }
     });
 
     pin.on('mouseleave', () => {
         document.body.style.cursor = 'default';
-        pin.radius(5);
+        pin.radius(6);
         layer.batchDraw();
     });
 
@@ -116,7 +214,7 @@ function createPin(group, relativeX, relativeY, pinType = 'electrical', role = '
 }
 
 function updateWires() {
-    wires.forEach(({ wire, startPin, endPin }) => {
+    window.wires.forEach(({ wire, startPin, endPin }) => {
         const p1 = startPin.getAbsolutePosition();
         const p2 = endPin.getAbsolutePosition();
         wire.points(getOrthogonalPoints(p1, p2));
@@ -124,13 +222,21 @@ function updateWires() {
 }
 
 function setupGroupDrag(group) {
-    group.on('dragmove', () => { updateWires(); layer.batchDraw(); });
-    group.on('dragend', () => { group.position(snapToGrid(group.position())); updateWires(); layer.batchDraw(); });
+    group.on('dragmove', () => {
+        updateWires();
+        updateSelectionBox();
+        layer.batchDraw();
+    });
+    group.on('dragend', () => {
+        group.position(snapToGrid(group.position()));
+        updateWires();
+        updateSelectionBox();
+        layer.batchDraw();
+    });
 }
 
-// Generador genérico de nombres predeterminados
 function getDefaultName(type) {
-    const count = components.filter(c => c.type === type).length + 1;
+    const count = window.components.filter(c => c.type === type).length + 1;
     switch (type) {
         case 'PUSHBUTTON_NO': return `S${count}`;
         case 'PUSHBUTTON_NC': return `S${count}`;
@@ -143,11 +249,14 @@ function getDefaultName(type) {
     }
 }
 
-// --- GENERADORES DE COMPONENTES ---
-
+// ==========================================
+// GENERADORES DE COMPONENTES
+// ==========================================
 function createPowerSupply(x, y) {
     const group = new Konva.Group({ x, y, draggable: !isSimulating });
     group.type = 'POWER';
+
+    addHitArea(group, 80, 40);
 
     const line24V = new Konva.Line({ points: [0, 0, 40, 0], stroke: '#ef5350', strokeWidth: 3 });
     const text24V = new Konva.Text({ x: 45, y: -5, text: '+24V', fill: '#ef5350', fontSize: 12, fontStyle: 'bold' });
@@ -162,11 +271,10 @@ function createPowerSupply(x, y) {
 
     setupGroupDrag(group);
     layer.add(group);
-    components.push(group);
+    window.components.push(group);
     layer.batchDraw();
 }
 
-// Pulsador Normalmente Abierto (NO)
 function createPushButtonNO(x, y) {
     const tag = prompt("Nombre del Pulsador NA:", getDefaultName('PUSHBUTTON_NO')) || 'S1';
 
@@ -175,44 +283,50 @@ function createPushButtonNO(x, y) {
     group.tag = tag;
     group.isClosed = false;
 
-    const topTerm = new Konva.Line({ points: [15, 0, 15, 15], stroke: '#ffffff', strokeWidth: 2 });
-    const botTerm = new Konva.Line({ points: [15, 35, 15, 50], stroke: '#ffffff', strokeWidth: 2 });
-    const dot1 = new Konva.Circle({ x: 15, y: 15, radius: 2, fill: '#ffffff' });
-    const dot2 = new Konva.Circle({ x: 15, y: 35, radius: 2, fill: '#ffffff' });
+    addHitArea(group, 70, 60);
 
-    const bridge = new Konva.Line({ points: [5, 12, 22, 12], stroke: '#ffffff', strokeWidth: 2 });
-    const actuator = new Konva.Line({ points: [13.5, 0, 13.5, 12], stroke: '#ffffff', strokeWidth: 1.5, dash: [2, 2] });
-    const label = new Konva.Text({ x: 30, y: 18, text: tag, fontSize: 14, fill: '#ffffff' });
+    const topTerm = new Konva.Line({ points: [20, 0, 20, 15], stroke: '#ffffff', strokeWidth: 2 });
+    const botTerm = new Konva.Line({ points: [20, 35, 20, 50], stroke: '#ffffff', strokeWidth: 2 });
+    const dot1 = new Konva.Circle({ x: 20, y: 15, radius: 3, fill: '#ffffff' });
+    const dot2 = new Konva.Circle({ x: 20, y: 35, radius: 3, fill: '#ffffff' });
 
-    group.add(topTerm, botTerm, dot1, dot2, bridge, actuator, label);
+    const bridge = new Konva.Line({ points: [28, 12, 28, 38], stroke: '#4caf50', strokeWidth: 2.5 });
+    const capTop = new Konva.Line({ points: [23, 12, 28, 12], stroke: '#4caf50', strokeWidth: 2 });
+    const capBot = new Konva.Line({ points: [23, 38, 28, 38], stroke: '#4caf50', strokeWidth: 2 });
+
+    const actuator = new Konva.Line({ points: [28, 25, 42, 25], stroke: '#888888', strokeWidth: 1.5, dash: [2, 2] });
+    const buttonCap = new Konva.Line({ points: [42, 18, 42, 32], stroke: '#4caf50', strokeWidth: 3 });
+
+    const label = new Konva.Text({ x: 48, y: 18, text: tag, fontSize: 14, fill: '#4caf50', fontStyle: 'bold' });
+
+    group.add(topTerm, botTerm, dot1, dot2, bridge, capTop, capBot, actuator, buttonCap, label);
     group.bridge = bridge;
 
-    group.pinIn = createPin(group, 15, 0, 'electrical', 'in');
-    group.pinOut = createPin(group, 15, 50, 'electrical', 'out');
+    group.pinIn = createPin(group, 20, 0, 'electrical', 'in');
+    group.pinOut = createPin(group, 20, 50, 'electrical', 'out');
 
-    group.on('mousedown', () => {
-        if (!isSimulating) return;
+    group.on('mousedown', (e) => {
+        if (!isSimulating || e.evt.button !== 0) return;
         group.isClosed = true;
-        group.bridge.y(3);
+        group.bridge.points([20, 12, 20, 38]); // Mueve la barra de contacto directamente a las terminales
         solveCircuit();
         layer.batchDraw();
     });
 
-    stage.on('mouseup', () => {
-        if (!isSimulating || !group.isClosed) return;
+    stage.on('mouseup', (e) => {
+        if (!isSimulating || !group.isClosed || e.evt.button !== 0) return;
         group.isClosed = false;
-        group.bridge.y(0);
+        group.bridge.points([28, 12, 28, 38]); // Regresa a la posición abierta
         solveCircuit();
         layer.batchDraw();
     });
 
     setupGroupDrag(group);
     layer.add(group);
-    components.push(group);
+    window.components.push(group);
     layer.batchDraw();
 }
 
-// Pulsador Normalmente Cerrado (NC)
 function createPushButtonNC(x, y) {
     const tag = prompt("Nombre del Pulsador NC:", getDefaultName('PUSHBUTTON_NC')) || 'S0';
 
@@ -221,44 +335,48 @@ function createPushButtonNC(x, y) {
     group.tag = tag;
     group.isClosed = true;
 
-    const topTerm = new Konva.Line({ points: [15, 0, 15, 15], stroke: '#ffffff', strokeWidth: 2 });
-    const botTerm = new Konva.Line({ points: [15, 35, 15, 50], stroke: '#ffffff', strokeWidth: 2 });
-    const dot1 = new Konva.Circle({ x: 15, y: 15, radius: 2, fill: '#ffffff' });
-    const dot2 = new Konva.Circle({ x: 15, y: 35, radius: 2, fill: '#ffffff' });
+    addHitArea(group, 70, 60);
 
-    const bridge = new Konva.Line({ points: [5, 15, 22, 15], stroke: '#ffffff', strokeWidth: 2 });
-    const actuator = new Konva.Line({ points: [13.5, 0, 13.5, 15], stroke: '#ffffff', strokeWidth: 1.5, dash: [2, 2] });
-    const label = new Konva.Text({ x: 30, y: 18, text: tag, fontSize: 14, fill: '#ffffff' });
+    const topTerm = new Konva.Line({ points: [20, 0, 20, 15], stroke: '#ffffff', strokeWidth: 2 });
+    const botTerm = new Konva.Line({ points: [20, 35, 20, 50], stroke: '#ffffff', strokeWidth: 2 });
+    const dot1 = new Konva.Circle({ x: 20, y: 15, radius: 3, fill: '#ffffff' });
+    const dot2 = new Konva.Circle({ x: 20, y: 35, radius: 3, fill: '#ffffff' });
 
-    group.add(topTerm, botTerm, dot1, dot2, bridge, actuator, label);
+    const bridge = new Konva.Line({ points: [20, 15, 20, 35], stroke: '#ef5350', strokeWidth: 2.5 });
+
+    const actuator = new Konva.Line({ points: [20, 25, 38, 25], stroke: '#888888', strokeWidth: 1.5, dash: [2, 2] });
+    const buttonCap = new Konva.Line({ points: [38, 18, 38, 32], stroke: '#ef5350', strokeWidth: 3 });
+
+    const label = new Konva.Text({ x: 44, y: 18, text: tag, fontSize: 14, fill: '#ef5350', fontStyle: 'bold' });
+
+    group.add(topTerm, botTerm, dot1, dot2, bridge, actuator, buttonCap, label);
     group.bridge = bridge;
 
-    group.pinIn = createPin(group, 15, 0, 'electrical', 'in');
-    group.pinOut = createPin(group, 15, 50, 'electrical', 'out');
+    group.pinIn = createPin(group, 20, 0, 'electrical', 'in');
+    group.pinOut = createPin(group, 20, 50, 'electrical', 'out');
 
-    group.on('mousedown', () => {
-        if (!isSimulating) return;
+    group.on('mousedown', (e) => {
+        if (!isSimulating || e.evt.button !== 0) return;
         group.isClosed = false;
-        group.bridge.y(-5);
+        group.bridge.points([28, 15, 28, 35]); // Abre el contacto desplazándolo a la derecha
         solveCircuit();
         layer.batchDraw();
     });
 
-    stage.on('mouseup', () => {
-        if (!isSimulating || group.isClosed) return;
+    stage.on('mouseup', (e) => {
+        if (!isSimulating || group.isClosed || e.evt.button !== 0) return;
         group.isClosed = true;
-        group.bridge.y(0);
+        group.bridge.points([20, 15, 20, 35]); // Cierra el contacto volviendo a la izquierda
         solveCircuit();
         layer.batchDraw();
     });
 
     setupGroupDrag(group);
     layer.add(group);
-    components.push(group);
+    window.components.push(group);
     layer.batchDraw();
 }
 
-// Bobina de Relé
 function createRelay(x, y) {
     const tag = prompt("Nombre de la Bobina del Relé:", getDefaultName('RELAY')) || 'K1';
 
@@ -267,25 +385,34 @@ function createRelay(x, y) {
     group.tag = tag;
     group.isEnergized = false;
 
+    addHitArea(group, 50, 70);
+
     const box = new Konva.Rect({
-        width: 40, height: 60, stroke: '#007acc', strokeWidth: 2, fill: '#252526', cornerRadius: 2,
+        x: 0, y: 10, width: 40, height: 50, stroke: '#007acc', strokeWidth: 2, fill: '#1e1e1e', cornerRadius: 2,
     });
 
-    const label = new Konva.Text({ x: 10, y: 22, text: tag, fontSize: 16, fill: '#ffffff' });
+    const diagLine = new Konva.Line({ points: [0, 20, 40, 20], stroke: '#007acc', strokeWidth: 1.5 });
 
-    group.add(box, label);
+    const lineA1 = new Konva.Line({ points: [20, 0, 20, 10], stroke: '#ffffff', strokeWidth: 2 });
+    const lineA2 = new Konva.Line({ points: [20, 60, 20, 70], stroke: '#ffffff', strokeWidth: 2 });
+
+    const labelA1 = new Konva.Text({ x: 5, y: 0, text: 'A1', fontSize: 9, fill: '#aaaaaa' });
+    const labelA2 = new Konva.Text({ x: 5, y: 60, text: 'A2', fontSize: 9, fill: '#aaaaaa' });
+
+    const label = new Konva.Text({ x: 10, y: 30, text: tag, fontSize: 15, fill: '#ffffff', fontStyle: 'bold' });
+
+    group.add(box, diagLine, lineA1, lineA2, labelA1, labelA2, label);
     group.box = box;
 
     group.pinA1 = createPin(group, 20, 0, 'electrical', 'in');
-    group.pinA2 = createPin(group, 20, 60, 'electrical', 'out');
+    group.pinA2 = createPin(group, 20, 70, 'electrical', 'out');
 
     setupGroupDrag(group);
     layer.add(group);
-    components.push(group);
+    window.components.push(group);
     layer.batchDraw();
 }
 
-// Contacto Auxiliar de Relé normalmente Abierto (NO)
 function createRelayContactNO(x, y) {
     const tag = prompt("Nombre del Relé al que pertenece este Contacto NA:", getDefaultName('RELAY_CONTACT_NO')) || 'K1';
 
@@ -294,13 +421,15 @@ function createRelayContactNO(x, y) {
     group.tag = tag;
     group.isClosed = false;
 
+    addHitArea(group, 50, 50);
+
     const topTerm = new Konva.Line({ points: [15, 0, 15, 15], stroke: '#ffcc00', strokeWidth: 2 });
     const botTerm = new Konva.Line({ points: [15, 35, 15, 50], stroke: '#ffcc00', strokeWidth: 2 });
-    const dot1 = new Konva.Circle({ x: 15, y: 15, radius: 2, fill: '#ffcc00' });
-    const dot2 = new Konva.Circle({ x: 15, y: 35, radius: 2, fill: '#ffcc00' });
+    const dot1 = new Konva.Circle({ x: 15, y: 15, radius: 2.5, fill: '#ffcc00' });
+    const dot2 = new Konva.Circle({ x: 15, y: 35, radius: 2.5, fill: '#ffcc00' });
 
-    const bridge = new Konva.Line({ points: [5, 12, 22, 12], stroke: '#ffcc00', strokeWidth: 2 });
-    const label = new Konva.Text({ x: 28, y: 18, text: tag, fontSize: 13, fill: '#ffcc00' });
+    const bridge = new Konva.Line({ points: [15, 35, 25, 15], stroke: '#ffcc00', strokeWidth: 2.5 });
+    const label = new Konva.Text({ x: 28, y: 18, text: tag, fontSize: 13, fill: '#ffcc00', fontStyle: 'bold' });
 
     group.add(topTerm, botTerm, dot1, dot2, bridge, label);
     group.bridge = bridge;
@@ -310,11 +439,10 @@ function createRelayContactNO(x, y) {
 
     setupGroupDrag(group);
     layer.add(group);
-    components.push(group);
+    window.components.push(group);
     layer.batchDraw();
 }
 
-// Contacto Auxiliar de Relé normalmente Cerrado (NC)
 function createRelayContactNC(x, y) {
     const tag = prompt("Nombre del Relé al que pertenece este Contacto NC:", getDefaultName('RELAY_CONTACT_NC')) || 'K1';
 
@@ -323,15 +451,18 @@ function createRelayContactNC(x, y) {
     group.tag = tag;
     group.isClosed = true;
 
+    addHitArea(group, 50, 50);
+
     const topTerm = new Konva.Line({ points: [15, 0, 15, 15], stroke: '#ffcc00', strokeWidth: 2 });
     const botTerm = new Konva.Line({ points: [15, 35, 15, 50], stroke: '#ffcc00', strokeWidth: 2 });
-    const dot1 = new Konva.Circle({ x: 15, y: 15, radius: 2, fill: '#ffcc00' });
-    const dot2 = new Konva.Circle({ x: 15, y: 35, radius: 2, fill: '#ffcc00' });
+    const dot1 = new Konva.Circle({ x: 15, y: 15, radius: 2.5, fill: '#ffcc00' });
+    const dot2 = new Konva.Circle({ x: 15, y: 35, radius: 2.5, fill: '#ffcc00' });
 
-    const bridge = new Konva.Line({ points: [5, 15, 22, 15], stroke: '#ffcc00', strokeWidth: 2 });
-    const label = new Konva.Text({ x: 28, y: 18, text: tag, fontSize: 13, fill: '#ffcc00' });
+    const bridge = new Konva.Line({ points: [15, 15, 15, 35], stroke: '#ffcc00', strokeWidth: 2.5 });
+    const flag = new Konva.Line({ points: [10, 15, 15, 15], stroke: '#ffcc00', strokeWidth: 2 });
+    const label = new Konva.Text({ x: 28, y: 18, text: tag, fontSize: 13, fill: '#ffcc00', fontStyle: 'bold' });
 
-    group.add(topTerm, botTerm, dot1, dot2, bridge, label);
+    group.add(topTerm, botTerm, dot1, dot2, bridge, flag, label);
     group.bridge = bridge;
 
     group.pinIn = createPin(group, 15, 0, 'electrical', 'in');
@@ -339,17 +470,18 @@ function createRelayContactNC(x, y) {
 
     setupGroupDrag(group);
     layer.add(group);
-    components.push(group);
+    window.components.push(group);
     layer.batchDraw();
 }
 
-// Válvula Electroneumática 3/2
 function createValve32(x, y) {
     const tag = prompt("Nombre del Solenoide/Válvula:", getDefaultName('VALVE32')) || 'Y1';
 
     const group = new Konva.Group({ x, y, draggable: !isSimulating });
     group.type = 'VALVE32';
     group.tag = tag;
+
+    addHitArea(group, 70, 40);
 
     const box1 = new Konva.Rect({ x: 0, y: 0, width: 30, height: 30, stroke: '#4caf50', strokeWidth: 2, fill: '#252526' });
     const box2 = new Konva.Rect({ x: 30, y: 0, width: 30, height: 30, stroke: '#4caf50', strokeWidth: 2, fill: '#252526' });
@@ -368,17 +500,18 @@ function createValve32(x, y) {
 
     setupGroupDrag(group);
     layer.add(group);
-    components.push(group);
+    window.components.push(group);
     layer.batchDraw();
 }
 
-// Cilindro Neumático
 function createCylinder(x, y) {
     const tag = prompt("Nombre del Cilindro:", getDefaultName('CYLINDER')) || 'A1';
 
     const group = new Konva.Group({ x, y, draggable: !isSimulating });
     group.type = 'CYLINDER';
     group.tag = tag;
+
+    addHitArea(group, 130, 40);
 
     const body = new Konva.Rect({ width: 80, height: 30, stroke: '#4caf50', strokeWidth: 2, fill: '#252526' });
     const rod = new Konva.Rect({ x: 80, y: 10, width: 40, height: 10, fill: '#888' });
@@ -391,36 +524,35 @@ function createCylinder(x, y) {
 
     setupGroupDrag(group);
     layer.add(group);
-    components.push(group);
+    window.components.push(group);
     layer.batchDraw();
 }
 
-// --- MOTOR DE SIMULACIÓN Y LÓGICA ELECTROMECÁNICA ---
-
+// ==========================================
+// SIMULACIÓN
+// ==========================================
 function solveCircuit() {
     if (!isSimulating) return;
 
-    // 1. Resetear cables y componentes
-    wires.forEach(w => {
+    window.wires.forEach(w => {
         w.powered = false;
         w.wire.stroke(w.startPin.pinType === 'electrical' ? '#888888' : '#0288d1');
     });
 
-    components.forEach(c => {
+    window.components.forEach(c => {
         if (c.type === 'RELAY') {
             c.isEnergized = false;
-            if (c.box) c.box.fill('#252526');
+            if (c.box) c.box.fill('#1e1e1e');
         }
         if (c.type === 'VALVE32' && c.solenoid) c.solenoid.fill('transparent');
         if (c.type === 'CYLINDER' && c.rod) c.rod.x(80);
     });
 
-        // 2. Resolver propagación inicial desde la alimentación +24V
-        const powerSupplies = components.filter(c => c.type === 'POWER');
+        const powerSupplies = window.components.filter(c => c.type === 'POWER');
 
         powerSupplies.forEach(ps => {
             const startPin = ps.pin24V;
-            wires.forEach(w => {
+            window.wires.forEach(w => {
                 if (w.startPin === startPin || w.endPin === startPin) {
                     const nextPin = w.startPin === startPin ? w.endPin : w.startPin;
                     propagateElectrical(nextPin, w);
@@ -428,31 +560,29 @@ function solveCircuit() {
             });
         });
 
-        // 3. Evaluar Estado de Contactos de Relé según el estado de sus Bobinas
         let relayStateChanged = false;
 
-        components.forEach(c => {
+        window.components.forEach(c => {
             if (c.type === 'RELAY_CONTACT_NO') {
-                const parentRelay = components.find(r => r.type === 'RELAY' && r.tag === c.tag);
+                const parentRelay = window.components.find(r => r.type === 'RELAY' && r.tag === c.tag);
                 const shouldClose = parentRelay && parentRelay.isEnergized;
                 if (c.isClosed !== shouldClose) {
                     c.isClosed = shouldClose;
-                    c.bridge.y(shouldClose ? 3 : 0);
+                    c.bridge.points(shouldClose ? [15, 35, 15, 15] : [15, 35, 25, 15]);
                     relayStateChanged = true;
                 }
             }
             if (c.type === 'RELAY_CONTACT_NC') {
-                const parentRelay = components.find(r => r.type === 'RELAY' && r.tag === c.tag);
+                const parentRelay = window.components.find(r => r.type === 'RELAY' && r.tag === c.tag);
                 const shouldClose = !(parentRelay && parentRelay.isEnergized);
                 if (c.isClosed !== shouldClose) {
                     c.isClosed = shouldClose;
-                    c.bridge.y(shouldClose ? 0 : -5);
+                    c.bridge.points(shouldClose ? [15, 15, 15, 35] : [15, 35, 25, 15]);
                     relayStateChanged = true;
                 }
             }
         });
 
-        // Si algún contacto secundario cambió de estado, volver a resolver el circuito
         if (relayStateChanged) {
             solveCircuit();
         } else {
@@ -466,7 +596,6 @@ function propagateElectrical(currentPin, activeWire) {
 
     const parent = currentPin.parentComponent;
 
-    // Evaluación de continuidad según estado actual del componente
     if ((parent.type === 'PUSHBUTTON_NO' || parent.type === 'PUSHBUTTON_NC' ||
         parent.type === 'RELAY_CONTACT_NO' || parent.type === 'RELAY_CONTACT_NC') && parent.isClosed) {
         const otherPin = currentPin === parent.pinIn ? parent.pinOut : parent.pinIn;
@@ -485,7 +614,7 @@ function propagateElectrical(currentPin, activeWire) {
 }
 
 function findAndPropagate(pin) {
-    wires.forEach(w => {
+    window.wires.forEach(w => {
         if (!w.powered && (w.startPin === pin || w.endPin === pin)) {
             const nextPin = w.startPin === pin ? w.endPin : w.startPin;
             propagateElectrical(nextPin, w);
@@ -495,7 +624,7 @@ function findAndPropagate(pin) {
 
 function propagatePneumatic(valve) {
     const outPin = valve.pinAirOut;
-    wires.forEach(w => {
+    window.wires.forEach(w => {
         if (w.startPin === outPin || w.endPin === outPin) {
             w.wire.stroke('#00e5ff');
             const targetPin = w.startPin === outPin ? w.endPin : w.startPin;
@@ -510,8 +639,9 @@ function propagatePneumatic(valve) {
 
 function setSimulationMode(active) {
     isSimulating = active;
+    clearSelection();
 
-    components.forEach(c => c.draggable(!active));
+    window.components.forEach(c => c.draggable(!active));
 
     const btnPlay = document.getElementById('btn-play');
     const btnStop = document.getElementById('btn-stop');
@@ -520,29 +650,37 @@ function setSimulationMode(active) {
     if (btnStop) btnStop.style.display = active ? 'inline-block' : 'none';
 
     if (!active) {
-        components.forEach(c => {
+        window.components.forEach(c => {
             if (c.type === 'PUSHBUTTON_NO') {
                 c.isClosed = false;
-                if (c.bridge) c.bridge.y(0);
+                if (c.bridge) {
+                    c.bridge.x(0); // Restablecer cualquier desplazamiento x acumulado
+                    c.bridge.points([28, 12, 28, 38]); // Restablecer los puntos del estado reposo (abierto)
+                }
             }
             if (c.type === 'PUSHBUTTON_NC') {
                 c.isClosed = true;
-                if (c.bridge) c.bridge.y(0);
+                if (c.bridge) {
+                    c.bridge.x(0); // Restablecer cualquier desplazamiento x acumulado
+                    c.bridge.points([20, 15, 20, 35]); // Restablecer los puntos del estado reposo (cerrado)
+                }
             }
             if (c.type === 'RELAY_CONTACT_NO') {
                 c.isClosed = false;
-                if (c.bridge) c.bridge.y(0);
+                if (c.bridge) c.bridge.points([15, 35, 25, 15]);
             }
             if (c.type === 'RELAY_CONTACT_NC') {
                 c.isClosed = true;
-                if (c.bridge) c.bridge.y(0);
+                if (c.bridge) c.bridge.points([15, 15, 15, 35]);
             }
         });
     }
     solveCircuit();
 }
 
-// Vinculación de eventos a la barra lateral
+// ==========================================
+// EVENTOS Y EVENT LISTENERS
+// ==========================================
 document.addEventListener('DOMContentLoaded', () => {
     const btnPower = document.getElementById('add-power');
     const btnPushNO = document.getElementById('add-pushbutton');
@@ -572,16 +710,16 @@ document.addEventListener('DOMContentLoaded', () => {
     if (btnClear) {
         btnClear.addEventListener('click', () => {
             if (isSimulating) setSimulationMode(false);
+            clearSelection();
             layer.destroyChildren();
-            wires.length = 0;
-            components.length = 0;
+            window.wires.length = 0;
+            window.components.length = 0;
             drawGrid();
             layer.batchDraw();
         });
     }
 });
 
-// Eventos de ratón en el Stage
 stage.on('mousemove', () => {
     if (selectedPin && tempLine) {
         const startPos = selectedPin.getAbsolutePosition();
@@ -593,21 +731,98 @@ stage.on('mousemove', () => {
     }
 });
 
-stage.on('contentContextmenu', (e) => e.evt.preventDefault());
+// Selección de Componentes y Cables
+stage.on('click tap', (e) => {
+    if (isSimulating) return;
 
-window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && selectedPin) {
+    if (selectedPin && e.target === stage) {
         if (tempLine) tempLine.destroy();
         tempLine = null;
         selectedPin = null;
+        clearSelection();
+        return;
+    }
+
+    if (e.target === stage) {
+        clearSelection();
+        return;
+    }
+
+    const target = e.target;
+    if (target.isPin) return;
+
+    // Cable seleccionado
+    if (target.className === 'Line' && !target.parentComponent) {
+        clearSelection();
+        selectedElement = target;
+        selectedElement.stroke('#ff0055');
+        layer.batchDraw();
+        return;
+    }
+
+    // Componente seleccionado
+    let curr = target;
+    let foundGroup = null;
+
+    while (curr && curr !== stage) {
+        if (window.components.includes(curr)) {
+            foundGroup = curr;
+            break;
+        }
+        curr = curr.getParent();
+    }
+
+    if (foundGroup) {
+        clearSelection();
+        selectedElement = foundGroup;
+        updateSelectionBox();
         layer.batchDraw();
     }
 });
 
-window.addEventListener('resize', () => {
-    if (container) {
-        stage.width(container.clientWidth);
-        stage.height(container.clientHeight);
-        drawGrid();
+// Clic derecho para BORRADO INMEDIATO del objeto bajo el puntero
+stage.on('contentContextmenu', (e) => {
+    e.evt.preventDefault();
+    if (isSimulating) return;
+
+    const target = e.target;
+    if (target.isPin) return;
+
+    if (target.className === 'Line' && !target.parentComponent) {
+        window.deleteElement(target);
+        return;
+    }
+
+    let curr = target;
+    let foundGroup = null;
+
+    while (curr && curr !== stage) {
+        if (window.components.includes(curr)) {
+            foundGroup = curr;
+            break;
+        }
+        curr = curr.getParent();
+    }
+
+    if (foundGroup) {
+        window.deleteElement(foundGroup);
+    }
+});
+
+// Escuchador Global Teclado
+window.addEventListener('keydown', (e) => {
+    if (isSimulating) return;
+
+    if (e.key === 'Escape') {
+        if (tempLine) tempLine.destroy();
+        tempLine = null;
+        selectedPin = null;
+        clearSelection();
+        return;
+    }
+
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedElement) {
+        e.preventDefault();
+        window.deleteElement(selectedElement);
     }
 });
