@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OpenSimu - Editor Electroneumático</title>
   <link rel="stylesheet" href="css/styles.css">
-  <!-- Konva.js CDN para manejo ágil del Canvas -->
   <script src="https://unpkg.com/konva@9/konva.min.js"></script>
 </head>
 <body>
@@ -18,8 +17,13 @@
 
   <div class="main-container">
     <aside id="sidebar">
-      <h3>Símbolos</h3>
+      <h3>Eléctrica (IEC)</h3>
+      <button class="symbol-btn" id="add-power">⚡ Alimentación (24V / 0V)</button>
+      <button class="symbol-btn" id="add-pushbutton">🔘 Pulsador NA</button>
       <button class="symbol-btn" id="add-relay">󰝤 Relé / Bobina</button>
+
+      <h3 style="margin-top: 15px;">Neumática (ISO)</h3>
+      <button class="symbol-btn" id="add-valve32">🔀 Válvula 3/2 NC</button>
       <button class="symbol-btn" id="add-cylinder">󰄌 Cilindro Neumático</button>
     </aside>
 
