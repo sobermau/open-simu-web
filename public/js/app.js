@@ -1,4 +1,3 @@
-// Inicializar Canvas con Konva
 const container = document.getElementById('canvas-container');
 const stage = new Konva.Stage({
     container: 'canvas-container',
@@ -9,7 +8,12 @@ const stage = new Konva.Stage({
 const layer = new Konva.Layer();
 stage.add(layer);
 
-// Función para dibujar la rejilla (Grid CAD)
+// Estado global para manejo de conexiones
+let selectedPin = null;
+let tempLine = null;
+const wires = [];
+
+// Dibujar rejilla estilo CAD
 function drawGrid() {
     const gridSize = 20;
     const width = stage.width();
@@ -20,6 +24,7 @@ function drawGrid() {
             points: [i * gridSize, 0, i * gridSize, height],
             stroke: '#2a2a2a',
             strokeWidth: 1,
+            listening: false,
         }));
     }
     for (let j = 0; j < height / gridSize; j++) {
@@ -27,19 +32,100 @@ function drawGrid() {
             points: [0, j * gridSize, width, j * gridSize],
             stroke: '#2a2a2a',
             strokeWidth: 1,
+            listening: false,
         }));
     }
 }
 
 drawGrid();
 
-// Snapping a la rejilla de 20px
 function snapToGrid(pos) {
     const gridSize = 20;
     return {
         x: Math.round(pos.x / gridSize) * gridSize,
         y: Math.round(pos.y / gridSize) * gridSize,
     };
+}
+
+// Calcular ruta ortogonal (a 90 grados) entre dos puntos
+function getOrthogonalPoints(p1, p2) {
+    const midX = p1.x + (p2.x - p1.x) / 2;
+    return [p1.x, p1.y, midX, p1.y, midX, p2.y, p2.x, p2.y];
+}
+
+// Crear Pin/Terminal interactivo
+function createPin(group, relativeX, relativeY, pinType = 'electrical') {
+    const color = pinType === 'electrical' ? '#ff5555' : '#00bcd4';
+
+    const pin = new Konva.Circle({
+        x: relativeX,
+        y: relativeY,
+        radius: 5,
+        fill: color,
+        stroke: '#ffffff',
+        strokeWidth: 1,
+    });
+
+    // Eventos de conexión entre terminales
+    pin.on('mousedown', (e) => {
+        e.cancelBubble = true; // Evitar arrastrar el componente
+        const absolutePos = pin.getAbsolutePosition();
+
+        if (!selectedPin) {
+            // Iniciar trazo de cable
+            selectedPin = pin;
+            tempLine = new Konva.Line({
+                points: [absolutePos.x, absolutePos.y, absolutePos.x, absolutePos.y],
+                stroke: pinType === 'electrical' ? '#ffcc00' : '#0288d1',
+                strokeWidth: 2,
+                dash: [4, 4],
+            });
+            layer.add(tempLine);
+        } else if (selectedPin !== pin) {
+            // Finalizar trazo al conectar con otro pin
+            const startPos = selectedPin.getAbsolutePosition();
+            const endPos = pin.getAbsolutePosition();
+
+            const wire = new Konva.Line({
+                points: getOrthogonalPoints(startPos, endPos),
+                                        stroke: pinType === 'electrical' ? '#ffcc00' : '#0288d1',
+                                        strokeWidth: 2.5,
+            });
+
+            layer.add(wire);
+            wires.push({ wire, startPin: selectedPin, endPin: pin });
+
+            // Limpiar estado temporal
+            tempLine.destroy();
+            tempLine = null;
+            selectedPin = null;
+            layer.batchDraw();
+        }
+    });
+
+    pin.on('mouseenter', () => {
+        document.body.style.cursor = 'crosshair';
+        pin.radius(7);
+        layer.batchDraw();
+    });
+
+    pin.on('mouseleave', () => {
+        document.body.style.cursor = 'default';
+        pin.radius(5);
+        layer.batchDraw();
+    });
+
+    group.add(pin);
+    return pin;
+}
+
+// Actualizar cables cuando se mueven los componentes
+function updateWires() {
+    wires.forEach(({ wire, startPin, endPin }) => {
+        const p1 = startPin.getAbsolutePosition();
+        const p2 = endPin.getAbsolutePosition();
+        wire.points(getOrthogonalPoints(p1, p2));
+    });
 }
 
 // Creador de Componente: Relé Eléctrico (IEC)
@@ -50,7 +136,6 @@ function createRelay(x, y) {
         draggable: true,
     });
 
-    // Cuerpo del Relé
     const box = new Konva.Rect({
         width: 40,
         height: 60,
@@ -60,23 +145,26 @@ function createRelay(x, y) {
         cornerRadius: 2,
     });
 
-    // Terminales de conexión (A1 / A2)
-    const pinA1 = new Konva.Circle({ x: 20, y: 0, radius: 4, fill: '#ff5555' });
-    const pinA2 = new Konva.Circle({ x: 20, y: 60, radius: 4, fill: '#ff5555' });
-
-    // Texto
     const label = new Konva.Text({
-        x: 10,
+        x: 11,
         y: 22,
         text: 'K1',
         fontSize: 16,
         fill: '#ffffff',
     });
 
-    group.add(box, pinA1, pinA2, label);
+    group.add(box, label);
+    createPin(group, 20, 0, 'electrical');  // Terminal A1
+    createPin(group, 20, 60, 'electrical'); // Terminal A2
+
+    group.on('dragmove', () => {
+        updateWires();
+        layer.batchDraw();
+    });
 
     group.on('dragend', () => {
         group.position(snapToGrid(group.position()));
+        updateWires();
         layer.batchDraw();
     });
 
@@ -92,7 +180,6 @@ function createCylinder(x, y) {
         draggable: true,
     });
 
-    // Camisa del cilindro
     const body = new Konva.Rect({
         width: 80,
         height: 30,
@@ -101,7 +188,6 @@ function createCylinder(x, y) {
         fill: '#252526',
     });
 
-    // Vástago
     const rod = new Konva.Rect({
         x: 80,
         y: 10,
@@ -110,13 +196,17 @@ function createCylinder(x, y) {
         fill: '#888',
     });
 
-    // Puerto Neumático
-    const port = new Konva.Circle({ x: 20, y: 30, radius: 4, fill: '#00bcd4' });
+    group.add(body, rod);
+    createPin(group, 20, 30, 'pneumatic'); // Puerto de aire
 
-    group.add(body, rod, port);
+    group.on('dragmove', () => {
+        updateWires();
+        layer.batchDraw();
+    });
 
     group.on('dragend', () => {
         group.position(snapToGrid(group.position()));
+        updateWires();
         layer.batchDraw();
     });
 
@@ -124,17 +214,38 @@ function createCylinder(x, y) {
     layer.batchDraw();
 }
 
+// Seguir el puntero mientras se dibuja la línea temporal
+stage.on('mousemove', () => {
+    if (selectedPin && tempLine) {
+        const startPos = selectedPin.getAbsolutePosition();
+        const mousePos = stage.getPointerPosition();
+        tempLine.points(getOrthogonalPoints(startPos, mousePos));
+        layer.batchDraw();
+    }
+});
+
+// Cancelar cableado con Click Derecho o ESC
+stage.on('contentContextmenu', (e) => e.evt.preventDefault());
+window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && selectedPin) {
+        if (tempLine) tempLine.destroy();
+        tempLine = null;
+        selectedPin = null;
+        layer.batchDraw();
+    }
+});
+
 // Event Listeners
 document.getElementById('add-relay').addEventListener('click', () => createRelay(100, 100));
 document.getElementById('add-cylinder').addEventListener('click', () => createCylinder(100, 200));
 
 document.getElementById('btn-clear').addEventListener('click', () => {
     layer.destroyChildren();
+    wires.length = 0;
     drawGrid();
     layer.batchDraw();
 });
 
-// Ajuste dinámico de ventana
 window.addEventListener('resize', () => {
     stage.width(container.clientWidth);
     stage.height(container.clientHeight);
