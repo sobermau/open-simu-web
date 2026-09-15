@@ -1,14 +1,13 @@
 {
   "name": "open-simu-web",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Simulador web open-source de esquemas eléctricos, neumáticos e hidráulicos",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js",
+    "dev": "node --watch server.js"
   },
-  "keywords": [],
-  "type": "commonjs",
   "dependencies": {
-    "express": "^5.2.1"
+    "express": "^4.19.2"
   }
 }
