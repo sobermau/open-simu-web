@@ -515,38 +515,89 @@ function createTimerTON(x, y) {
     group.pinA1 = createPin(group, 22.5, 0, 'electrical', 'in');
     group.pinA2 = createPin(group, 22.5, 70, 'electrical', 'out');
 
+    // ==========================================
+    // NUEVO: EVENTO DOBLE CLIC PARA EDITAR TIEMPO
+    // ==========================================
+    group.on('dblclick', (e) => {
+        if (isSimulating) return;
+        e.cancelBubble = true; // Evitar interferencias con otros clics
+
+        const newTimeInput = prompt(`Editar tiempo de retardo para ${group.tag} (segundos):`, group.presetTime);
+        if (newTimeInput !== null) {
+            const newSeconds = Math.max(0.1, parseFloat(newTimeInput) || group.presetTime);
+            group.presetTime = newSeconds;
+            if (group.timerText) {
+                group.timerText.text(`${newSeconds}s`);
+            }
+            layer.batchDraw();
+        }
+    });
+
     setupGroupDrag(group);
     layer.add(group);
     window.components.push(group);
     layer.batchDraw();
 }
 
-function createTimerContactNO(x, y) {
-    const tag = prompt("Nombre del Temporizador asociado:", getDefaultName('TIMER_CONTACT_NO')) || 'KT1';
+function createTimerTON(x, y) {
+    const tag = prompt("Nombre del Temporizador:", getDefaultName('TIMER_TON')) || 'KT1';
+    if (!tag) return;
+
+    const inputTime = prompt("Tiempo de retardo (segundos):", "3");
+    const seconds = parseFloat(inputTime) || 3;
 
     const group = new Konva.Group({ x, y, draggable: !isSimulating });
-    group.type = 'TIMER_CONTACT_NO';
+    group.type = 'TIMER_TON';
     group.tag = tag;
-    group.isClosed = false;
+    group.presetTime = seconds;
+    group.startTime = null;
+    group.isEnergized = false;
+    group.isDone = false;
 
-    addHitArea(group, 50, 50);
+    addHitArea(group, 60, 70);
 
-    const topTerm = new Konva.Line({ points: [15, 0, 15, 15], stroke: '#ff9800', strokeWidth: 2 });
-    const botTerm = new Konva.Line({ points: [15, 35, 15, 50], stroke: '#ff9800', strokeWidth: 2 });
-    const dot1 = new Konva.Circle({ x: 15, y: 15, radius: 2.5, fill: '#ff9800' });
-    const dot2 = new Konva.Circle({ x: 15, y: 35, radius: 2.5, fill: '#ff9800' });
+    const box = new Konva.Rect({
+        x: 0, y: 10, width: 45, height: 50, stroke: '#ff9800', strokeWidth: 2, fill: '#1e1e1e', cornerRadius: 2,
+    });
 
-    const bridge = new Konva.Line({ points: [15, 35, 25, 15], stroke: '#ff9800', strokeWidth: 2.5 });
-    // Símbolo paraguas / retardo TON
-    const arc = new Konva.Line({ points: [25, 15, 28, 20, 22, 20, 25, 15], stroke: '#ff9800', strokeWidth: 1.5 });
+    const crossLine = new Konva.Line({ points: [0, 20, 45, 20], stroke: '#ff9800', strokeWidth: 1.5 });
+    const lineA1 = new Konva.Line({ points: [22.5, 0, 22.5, 10], stroke: '#ffffff', strokeWidth: 2 });
+    const lineA2 = new Konva.Line({ points: [22.5, 60, 22.5, 70], stroke: '#ffffff', strokeWidth: 2 });
 
-    const label = new Konva.Text({ x: 30, y: 18, text: tag, fontSize: 13, fill: '#ff9800', fontStyle: 'bold' });
+    const labelA1 = new Konva.Text({ x: 5, y: 0, text: 'A1', fontSize: 9, fill: '#aaaaaa' });
+    const labelA2 = new Konva.Text({ x: 5, y: 60, text: 'A2', fontSize: 9, fill: '#aaaaaa' });
 
-    group.add(topTerm, botTerm, dot1, dot2, bridge, arc, label);
-    group.bridge = bridge;
+    // Textos centrados y con mayor contraste
+    const label = new Konva.Text({ x: 0, y: 23, width: 45, text: tag, fontSize: 12, fill: '#ffffff', fontStyle: 'bold', align: 'center' });
+    const timerText = new Konva.Text({ x: 0, y: 40, width: 45, text: `${seconds}s`, fontSize: 11, fill: '#ffffff', fontStyle: 'bold', align: 'center' });
 
-    group.pinIn = createPin(group, 15, 0, 'electrical', 'in');
-    group.pinOut = createPin(group, 15, 50, 'electrical', 'out');
+    group.add(box, crossLine, lineA1, lineA2, labelA1, labelA2, label, timerText);
+    group.box = box;
+    group.timerText = timerText;
+
+    // Asegurar que los textos se dibujen sobre el fondo
+    label.moveToTop();
+    timerText.moveToTop();
+
+    group.pinA1 = createPin(group, 22.5, 0, 'electrical', 'in');
+    group.pinA2 = createPin(group, 22.5, 70, 'electrical', 'out');
+
+    // Doble clic para reconfigurar tiempo fuera de simulación
+    group.on('dblclick', (e) => {
+        if (isSimulating) return;
+        e.cancelBubble = true;
+
+        const newTimeInput = prompt(`Editar tiempo de retardo para ${group.tag} (segundos):`, group.presetTime);
+        if (newTimeInput !== null) {
+            const newSeconds = Math.max(0.1, parseFloat(newTimeInput) || group.presetTime);
+            group.presetTime = newSeconds;
+            if (group.timerText) {
+                group.timerText.text(`${newSeconds}s`);
+                group.timerText.moveToTop();
+            }
+            layer.batchDraw();
+        }
+    });
 
     setupGroupDrag(group);
     layer.add(group);
@@ -626,6 +677,8 @@ function updateTimers() {
                 if (c.timerText) {
                     const remaining = Math.max(0, c.presetTime - elapsed).toFixed(1);
                     c.timerText.text(`${remaining}s`);
+                    c.timerText.fill('#ffff00'); // Texto en amarillo para contrastar con el fondo energizado
+                    c.timerText.moveToTop();
                 }
 
                 if (elapsed >= c.presetTime && !c.isDone) {
@@ -636,7 +689,11 @@ function updateTimers() {
                 if (c.startTime !== null || c.isDone) {
                     c.startTime = null;
                     c.isDone = false;
-                    if (c.timerText) c.timerText.text(`${c.presetTime}s`);
+                    if (c.timerText) {
+                        c.timerText.text(`${c.presetTime}s`);
+                        c.timerText.fill('#ffffff');
+                        c.timerText.moveToTop();
+                    }
                     stateChanged = true;
                 }
             }
@@ -742,7 +799,11 @@ function propagateElectrical(currentPin, activeWire) {
 
         if (parent.type === 'TIMER_TON') {
             parent.isEnergized = true;
-            if (parent.box) parent.box.fill('#ff9800');
+            if (parent.box) parent.box.fill('#e65100'); // Fondo naranja oscuro energizado
+            if (parent.timerText) {
+                parent.timerText.fill('#ffff00');       // Texto amarillo brillante
+                parent.timerText.moveToTop();           // Mantiene el texto arriba de la caja
+            }
         }
 
         if (parent.type === 'VALVE32' && currentPin === parent.pinSol) {
