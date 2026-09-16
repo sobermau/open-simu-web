@@ -56,9 +56,14 @@ function snapToGrid(pos) {
     };
 }
 
-function getOrthogonalPoints(p1, p2) {
-    const midX = p1.x + (p2.x - p1.x) / 2;
-    return [p1.x, p1.y, midX, p1.y, midX, p2.y, p2.x, p2.y];
+function getOrthogonalPoints(p1, p2, offset = 0) {
+    const midX = p1.x + (p2.x - p1.x) / 2 + offset;
+    return [
+        p1.x, p1.y,
+        midX, p1.y,
+        midX, p2.y,
+        p2.x, p2.y
+    ];
 }
 
 // Crea una zona invisible que responde al clic en todo el área del grupo
@@ -179,12 +184,14 @@ function createPin(group, relativeX, relativeY, pinType = 'electrical', role = '
             const startPos = selectedPin.getAbsolutePosition();
             const endPos = pin.getAbsolutePosition();
 
+            const offset = (window.wires.length % 5) * 8 - 16;
             const wire = new Konva.Line({
-                points: getOrthogonalPoints(startPos, endPos),
+                points: getOrthogonalPoints(startPos, endPos, offset),
                                         stroke: pinType === 'electrical' ? '#888888' : '#0288d1',
                                         strokeWidth: 2.5,
                                         hitStrokeWidth: 12
             });
+            wire.wireOffset = offset;
 
             layer.add(wire);
             window.wires.push({ wire, startPin: selectedPin, endPin: pin, powered: false });
@@ -218,7 +225,8 @@ function updateWires() {
     window.wires.forEach(({ wire, startPin, endPin }) => {
         const p1 = startPin.getAbsolutePosition();
         const p2 = endPin.getAbsolutePosition();
-        wire.points(getOrthogonalPoints(p1, p2));
+        const offset = wire.wireOffset || 0;
+        wire.points(getOrthogonalPoints(p1, p2, offset));
     });
 }
 
@@ -255,6 +263,66 @@ function getDefaultName(type) {
 // ==========================================
 // GENERADORES DE COMPONENTES
 // ==========================================
+
+function createJunctionNode(x, y, pinType = 'electrical') {
+    const group = new Konva.Group({ x, y, draggable: !isSimulating });
+    group.type = 'JUNCTION';
+
+    addHitArea(group, 20, 20);
+
+    const dot = new Konva.Circle({
+        x: 10, y: 10,
+        radius: 5,
+        fill: pinType === 'electrical' ? '#ff5555' : '#00bcd4',
+        stroke: '#ffffff',
+        strokeWidth: 1.5
+    });
+
+    group.add(dot);
+
+    group.pin = createPin(group, 10, 10, pinType, 'junction');
+
+    setupGroupDrag(group);
+    layer.add(group);
+    window.components.push(group);
+    layer.batchDraw();
+}
+
+function createPowerRail(x, y, labelText, color) {
+    const group = new Konva.Group({ x, y, draggable: !isSimulating });
+    group.type = 'POWER_RAIL';
+
+    const railWidth = 400;
+    addHitArea(group, railWidth, 20);
+
+    const mainLine = new Konva.Line({
+        points: [0, 10, railWidth, 10],
+        stroke: color,
+        strokeWidth: 4
+    });
+
+    const label = new Konva.Text({
+        x: -45, y: 3,
+        text: labelText,
+        fill: color,
+        fontSize: 14,
+        fontStyle: 'bold'
+    });
+
+    group.add(mainLine, label);
+
+    group.pins = [];
+    for (let px = 0; px <= railWidth; px += 40) {
+        const pin = createPin(group, px, 10, 'electrical', labelText);
+        group.pins.push(pin);
+    }
+
+    setupGroupDrag(group);
+    layer.add(group);
+    window.components.push(group);
+    layer.batchDraw();
+}
+
 function createPowerSupply(x, y) {
     const group = new Konva.Group({ x, y, draggable: !isSimulating });
     group.type = 'POWER';
@@ -505,69 +573,6 @@ function createTimerTON(x, y) {
     const labelA1 = new Konva.Text({ x: 5, y: 0, text: 'A1', fontSize: 9, fill: '#aaaaaa' });
     const labelA2 = new Konva.Text({ x: 5, y: 60, text: 'A2', fontSize: 9, fill: '#aaaaaa' });
 
-    const label = new Konva.Text({ x: 8, y: 23, text: tag, fontSize: 13, fill: '#ffffff', fontStyle: 'bold' });
-    const timerText = new Konva.Text({ x: 8, y: 42, text: `${seconds}s`, fontSize: 11, fill: '#ff9800' });
-
-    group.add(box, crossLine, lineA1, lineA2, labelA1, labelA2, label, timerText);
-    group.box = box;
-    group.timerText = timerText;
-
-    group.pinA1 = createPin(group, 22.5, 0, 'electrical', 'in');
-    group.pinA2 = createPin(group, 22.5, 70, 'electrical', 'out');
-
-    // ==========================================
-    // NUEVO: EVENTO DOBLE CLIC PARA EDITAR TIEMPO
-    // ==========================================
-    group.on('dblclick', (e) => {
-        if (isSimulating) return;
-        e.cancelBubble = true; // Evitar interferencias con otros clics
-
-        const newTimeInput = prompt(`Editar tiempo de retardo para ${group.tag} (segundos):`, group.presetTime);
-        if (newTimeInput !== null) {
-            const newSeconds = Math.max(0.1, parseFloat(newTimeInput) || group.presetTime);
-            group.presetTime = newSeconds;
-            if (group.timerText) {
-                group.timerText.text(`${newSeconds}s`);
-            }
-            layer.batchDraw();
-        }
-    });
-
-    setupGroupDrag(group);
-    layer.add(group);
-    window.components.push(group);
-    layer.batchDraw();
-}
-
-function createTimerTON(x, y) {
-    const tag = prompt("Nombre del Temporizador:", getDefaultName('TIMER_TON')) || 'KT1';
-    if (!tag) return;
-
-    const inputTime = prompt("Tiempo de retardo (segundos):", "3");
-    const seconds = parseFloat(inputTime) || 3;
-
-    const group = new Konva.Group({ x, y, draggable: !isSimulating });
-    group.type = 'TIMER_TON';
-    group.tag = tag;
-    group.presetTime = seconds;
-    group.startTime = null;
-    group.isEnergized = false;
-    group.isDone = false;
-
-    addHitArea(group, 60, 70);
-
-    const box = new Konva.Rect({
-        x: 0, y: 10, width: 45, height: 50, stroke: '#ff9800', strokeWidth: 2, fill: '#1e1e1e', cornerRadius: 2,
-    });
-
-    const crossLine = new Konva.Line({ points: [0, 20, 45, 20], stroke: '#ff9800', strokeWidth: 1.5 });
-    const lineA1 = new Konva.Line({ points: [22.5, 0, 22.5, 10], stroke: '#ffffff', strokeWidth: 2 });
-    const lineA2 = new Konva.Line({ points: [22.5, 60, 22.5, 70], stroke: '#ffffff', strokeWidth: 2 });
-
-    const labelA1 = new Konva.Text({ x: 5, y: 0, text: 'A1', fontSize: 9, fill: '#aaaaaa' });
-    const labelA2 = new Konva.Text({ x: 5, y: 60, text: 'A2', fontSize: 9, fill: '#aaaaaa' });
-
-    // Textos centrados y con mayor contraste
     const label = new Konva.Text({ x: 0, y: 23, width: 45, text: tag, fontSize: 12, fill: '#ffffff', fontStyle: 'bold', align: 'center' });
     const timerText = new Konva.Text({ x: 0, y: 40, width: 45, text: `${seconds}s`, fontSize: 11, fill: '#ffffff', fontStyle: 'bold', align: 'center' });
 
@@ -575,14 +580,12 @@ function createTimerTON(x, y) {
     group.box = box;
     group.timerText = timerText;
 
-    // Asegurar que los textos se dibujen sobre el fondo
     label.moveToTop();
     timerText.moveToTop();
 
     group.pinA1 = createPin(group, 22.5, 0, 'electrical', 'in');
     group.pinA2 = createPin(group, 22.5, 70, 'electrical', 'out');
 
-    // Doble clic para reconfigurar tiempo fuera de simulación
     group.on('dblclick', (e) => {
         if (isSimulating) return;
         e.cancelBubble = true;
@@ -598,6 +601,36 @@ function createTimerTON(x, y) {
             layer.batchDraw();
         }
     });
+
+    setupGroupDrag(group);
+    layer.add(group);
+    window.components.push(group);
+    layer.batchDraw();
+}
+
+function createTimerContactNO(x, y) {
+    const tag = prompt("Nombre del Temporizador al que pertenece este Contacto NA:", getDefaultName('TIMER_CONTACT_NO')) || 'KT1';
+
+    const group = new Konva.Group({ x, y, draggable: !isSimulating });
+    group.type = 'TIMER_CONTACT_NO';
+    group.tag = tag;
+    group.isClosed = false;
+
+    addHitArea(group, 50, 50);
+
+    const topTerm = new Konva.Line({ points: [15, 0, 15, 15], stroke: '#ff9800', strokeWidth: 2 });
+    const botTerm = new Konva.Line({ points: [15, 35, 15, 50], stroke: '#ff9800', strokeWidth: 2 });
+    const dot1 = new Konva.Circle({ x: 15, y: 15, radius: 2.5, fill: '#ff9800' });
+    const dot2 = new Konva.Circle({ x: 15, y: 35, radius: 2.5, fill: '#ff9800' });
+
+    const bridge = new Konva.Line({ points: [15, 35, 25, 15], stroke: '#ff9800', strokeWidth: 2.5 });
+    const label = new Konva.Text({ x: 28, y: 18, text: tag, fontSize: 13, fill: '#ff9800', fontStyle: 'bold' });
+
+    group.add(topTerm, botTerm, dot1, dot2, bridge, label);
+    group.bridge = bridge;
+
+    group.pinIn = createPin(group, 15, 0, 'electrical', 'in');
+    group.pinOut = createPin(group, 15, 50, 'electrical', 'out');
 
     setupGroupDrag(group);
     layer.add(group);
@@ -677,7 +710,7 @@ function updateTimers() {
                 if (c.timerText) {
                     const remaining = Math.max(0, c.presetTime - elapsed).toFixed(1);
                     c.timerText.text(`${remaining}s`);
-                    c.timerText.fill('#ffff00'); // Texto en amarillo para contrastar con el fondo energizado
+                    c.timerText.fill('#ffff00');
                     c.timerText.moveToTop();
                 }
 
@@ -729,7 +762,6 @@ function solveCircuit() {
     });
 
         const powerSupplies = window.components.filter(c => c.type === 'POWER');
-
         powerSupplies.forEach(ps => {
             const startPin = ps.pin24V;
             window.wires.forEach(w => {
@@ -738,6 +770,16 @@ function solveCircuit() {
                     propagateElectrical(nextPin, w);
                 }
             });
+        });
+
+        const powerRails24V = window.components.filter(c => c.type === 'POWER_RAIL');
+        powerRails24V.forEach(rail => {
+            const is24VRail = rail.pins.some(p => p.role === '+24V');
+            if (is24VRail) {
+                rail.pins.forEach(pin => {
+                    findAndPropagate(pin);
+                });
+            }
         });
 
         let stateChanged = false;
@@ -785,6 +827,16 @@ function propagateElectrical(currentPin, activeWire) {
 
     const parent = currentPin.parentComponent;
 
+    if (parent.type === 'JUNCTION') {
+        findAndPropagate(currentPin);
+    }
+
+    if (parent.type === 'POWER_RAIL') {
+        parent.pins.forEach(p => {
+            if (p !== currentPin) findAndPropagate(p);
+        });
+    }
+
     if ((parent.type === 'PUSHBUTTON_NO' || parent.type === 'PUSHBUTTON_NC' ||
         parent.type === 'RELAY_CONTACT_NO' || parent.type === 'RELAY_CONTACT_NC' ||
         parent.type === 'TIMER_CONTACT_NO') && parent.isClosed) {
@@ -799,10 +851,10 @@ function propagateElectrical(currentPin, activeWire) {
 
         if (parent.type === 'TIMER_TON') {
             parent.isEnergized = true;
-            if (parent.box) parent.box.fill('#e65100'); // Fondo naranja oscuro energizado
+            if (parent.box) parent.box.fill('#e65100');
             if (parent.timerText) {
-                parent.timerText.fill('#ffff00');       // Texto amarillo brillante
-                parent.timerText.moveToTop();           // Mantiene el texto arriba de la caja
+                parent.timerText.fill('#ffff00');
+                parent.timerText.moveToTop();
             }
         }
 
@@ -899,6 +951,9 @@ function setSimulationMode(active) {
 // ==========================================
 document.addEventListener('DOMContentLoaded', () => {
     const btnPower = document.getElementById('add-power');
+    const btnRail24V = document.getElementById('add-power-rail-24v');
+    const btnRail0V = document.getElementById('add-power-rail-0v');
+    const btnJunction = document.getElementById('add-junction');
     const btnPushNO = document.getElementById('add-pushbutton');
     const btnPushNC = document.getElementById('add-pushbutton-nc');
     const btnRelay = document.getElementById('add-relay');
@@ -910,6 +965,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnCyl = document.getElementById('add-cylinder');
 
     if (btnPower) btnPower.addEventListener('click', () => { if (!isSimulating) createPowerSupply(60, 60); });
+    if (btnRail24V) btnRail24V.addEventListener('click', () => { if (!isSimulating) createPowerRail(100, 40, '+24V', '#ef5350'); });
+    if (btnRail0V) btnRail0V.addEventListener('click', () => { if (!isSimulating) createPowerRail(100, 520, '0V', '#42a5f5'); });
+    if (btnJunction) btnJunction.addEventListener('click', () => { if (!isSimulating) createJunctionNode(200, 200); });
+
     if (btnPushNO) btnPushNO.addEventListener('click', () => { if (!isSimulating) createPushButtonNO(180, 60); });
     if (btnPushNC) btnPushNC.addEventListener('click', () => { if (!isSimulating) createPushButtonNC(180, 140); });
     if (btnRelay) btnRelay.addEventListener('click', () => { if (!isSimulating) createRelay(300, 60); });
